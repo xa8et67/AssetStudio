@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using AssetStudio;
+using TGASharpLib;
 
 namespace AssetStudioGUI
 {
@@ -20,6 +21,7 @@ namespace AssetStudioGUI
                     return false;
                 ImageFormat format = null;
                 var ext = (string)Properties.Settings.Default["convertType"];
+                bool tga = false;
                 switch (ext)
                 {
                     case "BMP":
@@ -31,11 +33,20 @@ namespace AssetStudioGUI
                     case "JPEG":
                         format = ImageFormat.Jpeg;
                         break;
+                    case "TGA":
+                        tga = true;
+                        break;
                 }
                 var exportFullName = exportPathName + item.Text + "." + ext.ToLower();
                 if (ExportFileExists(exportFullName))
                     return false;
-                bitmap.Save(exportFullName, format);
+                if (tga)
+                {
+                    var file = new TGA(bitmap);
+                    file.Save(exportFullName);
+                }
+                else
+                    bitmap.Save(exportFullName, format);
                 bitmap.Dispose();
                 return true;
             }
@@ -82,7 +93,7 @@ namespace AssetStudioGUI
             var exportFullName = exportPath + item.Text + ".shader";
             if (ExportFileExists(exportFullName))
                 return false;
-            var m_Shader = (Shader) item.Asset;
+            var m_Shader = (Shader)item.Asset;
             if (m_Shader.compressedBlob != null) //5.5 and up
             {
                 var strs = ShaderConverter.ConvertMultiple(m_Shader);
@@ -167,24 +178,25 @@ namespace AssetStudioGUI
             #endregion
 
             #region UV
-            if (m_Mesh.m_UV0 != null && m_Mesh.m_UV0.Length == m_Mesh.m_VertexCount * 2)
+            if (m_Mesh.m_UV0?.Length > 0)
             {
-                for (int v = 0; v < m_Mesh.m_VertexCount; v++)
+                if (m_Mesh.m_UV0.Length == m_Mesh.m_VertexCount * 2)
                 {
-                    sb.AppendFormat("vt {0} {1}\r\n", m_Mesh.m_UV0[v * 2], m_Mesh.m_UV0[v * 2 + 1]);
+                    c = 2;
                 }
-            }
-            else if (m_Mesh.m_UV1 != null && m_Mesh.m_UV1.Length == m_Mesh.m_VertexCount * 2)
-            {
+                else if (m_Mesh.m_UV0.Length == m_Mesh.m_VertexCount * 3)
+                {
+                    c = 3;
+                }
                 for (int v = 0; v < m_Mesh.m_VertexCount; v++)
                 {
-                    sb.AppendFormat("vt {0} {1}\r\n", m_Mesh.m_UV1[v * 2], m_Mesh.m_UV1[v * 2 + 1]);
+                    sb.AppendFormat("vt {0} {1}\r\n", m_Mesh.m_UV0[v * c], m_Mesh.m_UV0[v * c + 1]);
                 }
             }
             #endregion
 
             #region Normals
-            if (m_Mesh.m_Normals != null && m_Mesh.m_Normals.Length > 0)
+            if (m_Mesh.m_Normals?.Length > 0)
             {
                 if (m_Mesh.m_Normals.Length == m_Mesh.m_VertexCount * 3)
                 {
@@ -250,6 +262,7 @@ namespace AssetStudioGUI
         {
             ImageFormat format = null;
             var type = (string)Properties.Settings.Default["convertType"];
+            bool tga = false;
             switch (type)
             {
                 case "BMP":
@@ -261,6 +274,9 @@ namespace AssetStudioGUI
                 case "JPEG":
                     format = ImageFormat.Jpeg;
                     break;
+                case "TGA":
+                    tga = true;
+                    break;
             }
             var exportFullName = exportPath + item.Text + "." + type.ToLower();
             if (ExportFileExists(exportFullName))
@@ -268,7 +284,13 @@ namespace AssetStudioGUI
             var bitmap = SpriteHelper.GetImageFromSprite((Sprite)item.Asset);
             if (bitmap != null)
             {
-                bitmap.Save(exportFullName, format);
+                if (tga)
+                {
+                    TGASharpLib.TGA file = new TGASharpLib.TGA(bitmap);
+                    file.Save(exportFullName);
+                }
+                else
+                    bitmap.Save(exportFullName, format);
                 bitmap.Dispose();
                 return true;
             }
@@ -299,30 +321,53 @@ namespace AssetStudioGUI
             var m_Animator = (Animator)item.Asset;
             var convert = animationList != null ? new ModelConverter(m_Animator, animationList.Select(x => (AnimationClip)x.Asset).ToArray()) : new ModelConverter(m_Animator);
             exportPath = $"{exportPath}{item.Text}\\{item.Text}.fbx";
-            return ExportFbx(convert, exportPath);
+            ExportFbx(convert, exportPath);
+            return true;
         }
 
-        public static bool ExportGameObject(GameObject gameObject, string exportPath, List<AssetItem> animationList = null)
+        public static void ExportGameObject(GameObject gameObject, string exportPath, List<AssetItem> animationList = null)
         {
             var convert = animationList != null ? new ModelConverter(gameObject, animationList.Select(x => (AnimationClip)x.Asset).ToArray()) : new ModelConverter(gameObject);
             exportPath = exportPath + Studio.FixFileName(gameObject.m_Name) + ".fbx";
-            return ExportFbx(convert, exportPath);
+            ExportFbx(convert, exportPath);
         }
 
-        private static bool ExportFbx(IImported convert, string exportPath)
+        public static void ExportGameObjectMerge(List<GameObject> gameObject, string exportPath, List<AssetItem> animationList = null)
+        {
+            var rootName = Path.GetFileNameWithoutExtension(exportPath);
+            var convert = animationList != null ? new ModelConverter(rootName, gameObject, animationList.Select(x => (AnimationClip)x.Asset).ToArray()) : new ModelConverter(rootName, gameObject);
+            ExportFbx(convert, exportPath);
+        }
+
+        private static void ExportFbx(IImported convert, string exportPath)
         {
             var eulerFilter = (bool)Properties.Settings.Default["eulerFilter"];
             var filterPrecision = (float)(decimal)Properties.Settings.Default["filterPrecision"];
-            var allFrames = (bool)Properties.Settings.Default["allFrames"];
-            var allBones = (bool)Properties.Settings.Default["allBones"];
-            var skins = (bool)Properties.Settings.Default["skins"];
+            var exportAllNodes = (bool)Properties.Settings.Default["exportAllNodes"];
+            var exportSkins = (bool)Properties.Settings.Default["exportSkins"];
+            var exportAnimations = (bool)Properties.Settings.Default["exportAnimations"];
+            var exportBlendShape = (bool)Properties.Settings.Default["exportBlendShape"];
+            var castToBone = (bool)Properties.Settings.Default["castToBone"];
             var boneSize = (int)(decimal)Properties.Settings.Default["boneSize"];
             var scaleFactor = (float)(decimal)Properties.Settings.Default["scaleFactor"];
-            var flatInbetween = (bool)Properties.Settings.Default["flatInbetween"];
             var fbxVersion = (int)Properties.Settings.Default["fbxVersion"];
             var fbxFormat = (int)Properties.Settings.Default["fbxFormat"];
-            ModelExporter.ExportFbx(exportPath, convert, eulerFilter, filterPrecision, allFrames, allBones, skins, boneSize, scaleFactor, flatInbetween, fbxVersion, fbxFormat == 1);
-            return true;
+            ModelExporter.ExportFbx(exportPath, convert, eulerFilter, filterPrecision,
+                exportAllNodes, exportSkins, exportAnimations, exportBlendShape, castToBone, boneSize, scaleFactor, fbxVersion, fbxFormat == 1);
+        }
+
+        public static bool ExportDumpFile(AssetItem item, string exportPath)
+        {
+            var exportFullName = exportPath + item.Text + ".txt";
+            if (ExportFileExists(exportFullName))
+                return false;
+            var str = item.Asset.Dump();
+            if (str != null)
+            {
+                File.WriteAllText(exportFullName, str);
+                return true;
+            }
+            return false;
         }
     }
 }
